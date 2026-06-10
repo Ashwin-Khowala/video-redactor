@@ -20,6 +20,25 @@ import threading
 import shutil
 import glob
 
+def get_ffmpeg_path():
+    # 1. Check if ffmpeg is in PATH
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    
+    # 2. Check standard WinGet packages directory
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    if local_appdata:
+        winget_pkg_dir = os.path.join(local_appdata, r"Microsoft\WinGet\Packages")
+        if os.path.exists(winget_pkg_dir):
+            for folder in os.listdir(winget_pkg_dir):
+                if folder.startswith("Gyan.FFmpeg"):
+                    search_path = os.path.join(winget_pkg_dir, folder)
+                    for root, dirs, files in os.walk(search_path):
+                        if "ffmpeg.exe" in files:
+                            return os.path.join(root, "ffmpeg.exe")
+                            
+    return "ffmpeg"
+
 # Default patterns
 EMAIL_REGEX = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 # Generic phone regex: matches digits separated by spaces, dashes, parentheses, or dots
@@ -61,13 +80,13 @@ def matches_sensitive(text, mode, custom_keywords=None):
         return True
         
     # --- Robust Phone Heuristic ---
-    digits_only = "".join(c for c in text_clean if c.isdigit())
-    if 7 <= len(digits_only) <= 15:
-        # Check standard phone patterns or generic digit groupings
-        if PHONE_REGEX.search(text_clean):
-            # Avoid matching timestamps like "2026-06-10" or "22:02:35"
-            if ":" in text_clean or ("-" in text_clean and len(digits_only) == 8):
-                # likely date/time
+    match = PHONE_REGEX.search(text_clean)
+    if match:
+        matched_phone = match.group(0)
+        matched_digits = "".join(c for c in matched_phone if c.isdigit())
+        if 7 <= len(matched_digits) <= 15:
+            # Avoid matching dates like "2026-06-10" (8 digits with dashes in matched portion)
+            if "-" in matched_phone and len(matched_digits) == 8:
                 return False
             return True
             
@@ -98,7 +117,7 @@ def merge_audio(video_no_audio, video_with_audio, final_output):
     print("Merging audio using FFmpeg...")
     try:
         ffmpeg_cmd = [
-            'ffmpeg', '-y',
+            get_ffmpeg_path(), '-y',
             '-i', video_no_audio,
             '-i', video_with_audio,
             '-c:v', 'copy',
@@ -138,12 +157,12 @@ def merge_audio(video_no_audio, video_with_audio, final_output):
             except Exception:
                 pass
 
-def worker_process(chunk_idx, input_path, output_path, args, progress_queue):
+def worker_process(chunk_idx, input_path, output_path, args, progress_queue, use_gpu):
     # Cap PyTorch CPU execution threads for this worker
     torch.set_num_threads(args.threads)
     
     # Initialize reader inside worker process
-    reader = easyocr.Reader(['en'])
+    reader = easyocr.Reader(['en'], gpu=use_gpu)
     
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -192,7 +211,7 @@ def worker_process(chunk_idx, input_path, output_path, args, progress_queue):
         trigger_ocr = False
         
         # 1. Page transition check
-        if prev_frame_gray is not None:
+        if args.frame_skip > 1 and prev_frame_gray is not None:
             diff_consecutive = cv2.absdiff(gray, prev_frame_gray).mean()
             if diff_consecutive > args.change_thresh:
                 if not transition_active:
@@ -234,8 +253,9 @@ def worker_process(chunk_idx, input_path, output_path, args, progress_queue):
                 ocr_frame = frame
                 
             active_blur_boxes = []
+            ocr_frame_rgb = cv2.cvtColor(ocr_frame, cv2.COLOR_BGR2RGB)
             results = reader.readtext(
-                ocr_frame, 
+                ocr_frame_rgb, 
                 canvas_size=args.max_ocr_dim, 
                 mag_ratio=args.mag_ratio, 
                 adjust_contrast=not args.no_contrast,
@@ -307,14 +327,14 @@ def progress_listener(q, total_frames):
         pbar.update(total_frames - processed)
     pbar.close()
 
-def run_sequential(args):
+def run_sequential(args, use_gpu):
     custom_keywords = [k.strip() for k in args.keywords.split(',')] if args.keywords else []
     
     print(f"Setting PyTorch CPU threads to {args.threads}...")
     torch.set_num_threads(args.threads)
     
-    print(f"Initializing EasyOCR for English...")
-    reader = easyocr.Reader(['en'])
+    print(f"Initializing EasyOCR for English (GPU={use_gpu})...")
+    reader = easyocr.Reader(['en'], gpu=use_gpu)
     
     # Open input video
     cap = cv2.VideoCapture(args.input)
@@ -378,7 +398,7 @@ def run_sequential(args):
         trigger_ocr = False
         
         # 1. Page transition check
-        if prev_frame_gray is not None:
+        if args.frame_skip > 1 and prev_frame_gray is not None:
             diff_consecutive = cv2.absdiff(gray, prev_frame_gray).mean()
             if diff_consecutive > args.change_thresh:
                 if not transition_active:
@@ -420,8 +440,9 @@ def run_sequential(args):
                 ocr_frame = frame
                 
             active_blur_boxes = []
+            ocr_frame_rgb = cv2.cvtColor(ocr_frame, cv2.COLOR_BGR2RGB)
             results = reader.readtext(
-                ocr_frame, 
+                ocr_frame_rgb, 
                 canvas_size=args.max_ocr_dim, 
                 mag_ratio=args.mag_ratio, 
                 adjust_contrast=not args.no_contrast,
@@ -493,8 +514,8 @@ def main():
     parser.add_argument("--output", "-o", required=True, help="Path to output video file")
     parser.add_argument("--mode", "-m", choices=['patterns', 'all'], default='patterns', 
                         help="all: blur all text; patterns: blur emails and phone numbers (default)")
-    parser.add_argument("--frame-skip", "-f", type=int, default=12, 
-                        help="Run OCR every N frames. Skipped frames reuse detections to speed up processing (default: 12)")
+    parser.add_argument("--frame-skip", "-f", type=int, default=1, 
+                        help="Run OCR every N frames. Skipped frames reuse detections to speed up processing (default: 1)")
     parser.add_argument("--padding", "-p", type=int, default=25, 
                         help="Pixels of padding to expand the blur box around detected text (default: 25)")
     parser.add_argument("--blur-strength", "-s", type=int, default=35, 
@@ -519,6 +540,8 @@ def main():
                         help="Skip merging audio from original video at the end")
     parser.add_argument("--workers", default="1",
                         help="Number of parallel worker processes. Use 'auto' to automatically choose based on CPU cores, or 1 to run sequentially (default: 1)")
+    parser.add_argument("--cpu", action="store_true",
+                        help="Force CPU execution for EasyOCR (disables GPU)")
     parser.add_argument("--debug", action="store_true",
                         help="Print OCR detections to console for debugging")
     
@@ -532,10 +555,19 @@ def main():
     abs_input = os.path.abspath(args.input)
     abs_output = os.path.abspath(args.output)
     
-    # Parse workers parameter
+    # Parse workers parameter and determine GPU availability
+    gpu_available = torch.cuda.is_available()
+    use_gpu = gpu_available and not args.cpu
+    
+    cpu_count = os.cpu_count() or 1
     if args.workers.lower() == 'auto':
-        cpu_count = os.cpu_count() or 1
-        num_workers = min(4, max(1, cpu_count // 3))
+        if use_gpu:
+            # Running multiple workers on GPU uses more VRAM. 2-3 workers is a safe sweet spot for consumer GPUs.
+            num_workers = max(1, min(3, cpu_count - 1))
+            print(f"GPU detected. Running in parallel on GPU with {num_workers} workers.")
+        else:
+            # Run up to cpu_count - 1 workers (capped at 4 for stability)
+            num_workers = max(1, min(4, cpu_count - 1))
     else:
         try:
             num_workers = int(args.workers)
@@ -543,9 +575,13 @@ def main():
             print(f"Error: Invalid value for --workers: '{args.workers}'. Must be an integer or 'auto'.")
             sys.exit(1)
             
+    use_gpu_for_workers = use_gpu
+    if use_gpu and num_workers > 1:
+        print(f"Notice: Running {num_workers} parallel workers on GPU. Ensure you have sufficient VRAM.")
+            
     if num_workers <= 1:
-        print("Running sequentially in a single process...")
-        run_sequential(args)
+        print(f"Running sequentially in a single process (GPU={use_gpu})...")
+        run_sequential(args, use_gpu=use_gpu)
         sys.exit(0)
         
     print(f"Running in parallel mode with {num_workers} worker processes...")
@@ -583,7 +619,7 @@ def main():
     # 1. Segment video into 60-second chunks using FFmpeg copy
     print("\n[Step 1/4] Segmenting input video into ~60-second chunks...")
     ffmpeg_split_cmd = [
-        'ffmpeg', '-y',
+        get_ffmpeg_path(), '-y',
         '-i', abs_input,
         '-f', 'segment',
         '-segment_time', '60',
@@ -622,7 +658,7 @@ def main():
     tasks = []
     for i, chunk_path in enumerate(chunk_files):
         out_chunk_path = os.path.join(temp_dir, f"processed_chunk_{i:03d}{ext}")
-        tasks.append((i, chunk_path, out_chunk_path, args, progress_queue))
+        tasks.append((i, chunk_path, out_chunk_path, args, progress_queue, use_gpu_for_workers))
         
     # Execute workers
     results = []
@@ -681,7 +717,7 @@ def main():
             
     temp_merged_video = os.path.join(temp_dir, f"merged_no_audio{ext}")
     ffmpeg_concat_cmd = [
-        'ffmpeg', '-y',
+        get_ffmpeg_path(), '-y',
         '-f', 'concat',
         '-safe', '0',
         '-i', 'concat_list.txt',
