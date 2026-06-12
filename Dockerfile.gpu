@@ -1,0 +1,21 @@
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    ffmpeg \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121 -e ".[gpu]"
+
+COPY src/ ./src/
+
+RUN python3 -c "import easyocr; easyocr.Reader(['en'], gpu=False)"
+
+ENTRYPOINT ["video-redactor"]

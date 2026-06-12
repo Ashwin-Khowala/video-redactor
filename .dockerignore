@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+.git
+tests/
+*.mp4
+*.avi
+temp_chunks/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
