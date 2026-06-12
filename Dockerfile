@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY pyproject.toml .
+COPY pyproject.toml LICENSE README.md ./
 RUN pip install --no-cache-dir -e ".[cpu]"
 
 COPY src/ ./src/
