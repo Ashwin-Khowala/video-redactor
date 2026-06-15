@@ -32,10 +32,10 @@ def main() -> None:
                         help="Gaussian blur kernel size (must be odd, default: 35)")
     parser.add_argument("--keywords", "-k", type=str, 
                         help="Comma-separated custom words/names to blur")
-    parser.add_argument("--max-ocr-dim", "-d", type=int, default=1080,
-                        help="Maximum width or height of the frame when passed to EasyOCR. (default: 1080)")
-    parser.add_argument("--static-thresh", "-t", type=float, default=0.8,
-                        help="Grayscale mean pixel difference threshold to classify a frame as static and skip OCR (default: 0.8)")
+    parser.add_argument("--max-ocr-dim", "-d", type=int, default=1920,
+                        help="Maximum width or height of the frame when passed to EasyOCR. (default: 1920)")
+    parser.add_argument("--static-thresh", "-t", type=float, default=0.1,
+                        help="Grayscale mean pixel difference threshold to classify a frame as static and skip OCR (default: 0.1)")
     parser.add_argument("--change-thresh", "-c", type=float, default=1.0,
                         help="Consecutive frame difference threshold to trigger OCR on scene/page changes (default: 1.0)")
     parser.add_argument("--no-contrast", action="store_true",

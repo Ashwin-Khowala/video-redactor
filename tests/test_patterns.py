@@ -10,9 +10,14 @@ def test_email_at_symbol(cfg):
     assert is_sensitive("user@gmail.com", cfg) is True
 
 def test_email_keyword(cfg):
-    assert is_sensitive("gmail", cfg) is True
-    assert is_sensitive("outlook", cfg) is True
-    assert is_sensitive("kiit.ac", cfg) is True
+    assert is_sensitive("gmail", cfg) is False
+    assert is_sensitive("outlook", cfg) is False
+    assert is_sensitive("kiit.ac", cfg) is False
+    assert is_sensitive("randomword", cfg) is False
+    assert is_sensitive(".com", cfg) is False
+    assert is_sensitive("@", cfg) is False
+    assert is_sensitive("testusergmail", cfg) is False
+
 
 def test_phone_indian(cfg):
     assert is_sensitive("+91 9876543210", cfg) is True
@@ -33,6 +38,24 @@ def test_mode_all(cfg):
 def test_custom_keyword(cfg):
     cfg.custom_keywords = ["john"]
     assert is_sensitive("john doe", cfg) is True
+
+def test_custom_keyword_standalone(cfg):
+    cfg.custom_keywords = ["john"]
+    assert is_sensitive("john doe", cfg) is True
+    assert is_sensitive("johnny doe", cfg) is False
+
+def test_email_fuzzy_matching(cfg):
+    assert is_sensitive("testuser @ gmail . com", cfg) is True
+    assert is_sensitive("testuser@gmail com", cfg) is True
+    assert is_sensitive("testuser.work@gmail.com", cfg) is True
+    assert is_sensitive("12345678@kiit.ac in", cfg) is True
+    assert is_sensitive("testuser@gmailcom", cfg) is True
+    assert is_sensitive("testuserO6@gmailcom", cfg) is True
+    assert is_sensitive("testusero6@gmail:", cfg) is True
+    assert is_sensitive("testusergmailcom", cfg) is True
+    assert is_sensitive("testusergmail", cfg) is False
+    assert is_sensitive("to continue to Club Fyndr", cfg) is False
+    assert is_sensitive("Sign in with Gmail", cfg) is False
 
 def test_selective_redaction(cfg):
     cfg.redact_types = ["email"]

@@ -15,8 +15,8 @@ class ProcessingConfig:
     frame_skip: int = 1
     padding: int = 25
     blur_strength: int = 35
-    max_ocr_dim: int = 1080
-    static_thresh: float = 0.8
+    max_ocr_dim: int = 1920
+    static_thresh: float = 0.1
     change_thresh: float = 1.0
     mag_ratio: float = 1.0
     min_size: int = 10
